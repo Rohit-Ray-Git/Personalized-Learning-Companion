@@ -1,6 +1,6 @@
 # test_api.py
 from api_setup import setup_apis
-from src.data.db_setup import setup_database, setup_vector_db
+from db_setup import setup_database, setup_vector_db
 import time
 
 def test_complete_setup():
