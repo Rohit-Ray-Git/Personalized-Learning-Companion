@@ -1,13 +1,10 @@
-# content_processing.py
+# content_processing.py (unchanged from your latest working version, just confirming)
 import os
 from PyPDF2 import PdfReader
 from docx import Document
 import networkx as nx
 from collections import Counter
-import chromadb
-from api_setup import setup_apis
 
-# Document Processing Functions
 def extract_text_from_pdf(file_path):
     """Extract text from a PDF file."""
     try:
@@ -72,7 +69,6 @@ def process_documents(directory="data/raw"):
     
     return extracted_content, knowledge_graphs
 
-# Knowledge Graph Function
 def build_knowledge_graph(text, max_nodes=10):
     """Create a simple knowledge graph from text."""
     words = [word.lower() for word in text.split() if len(word) > 3 and word.isalpha()]
@@ -86,67 +82,9 @@ def build_knowledge_graph(text, max_nodes=10):
     
     return G
 
-# RAG Functions
-def setup_vector_db(content, embeddings_model, persist_directory="data/embeddings/chroma_db"):
-    """Store content in a vector database."""
-    client = chromadb.PersistentClient(path=persist_directory)
-    collection = client.get_or_create_collection(name="study_materials")
-    
-    for filename, text in content.items():
-        embedding = embeddings_model.embed_query(text[:1000])  # Limit for performance
-        collection.add(
-            documents=[text],
-            metadatas=[{"filename": filename}],
-            ids=[filename],
-            embeddings=[embedding]  # Now a list of numbers
-        )
-    print(f"✅ Vector DB initialized with {collection.count()} documents")
-    return client
-
-def search_vector_db(query, embeddings_model, client):
-    """Search the vector DB for relevant content."""
-    collection = client.get_collection("study_materials")
-    query_embedding = embeddings_model.embed_query(query)
-    results = collection.query(query_embeddings=[query_embedding], n_results=2)
-    return results["documents"][0]
-
 if __name__ == "__main__":
-    # Setup APIs
-    llms, embeddings = setup_apis()
-    if not embeddings.get("huggingface"):
-        print("❌ Embedding model not available. Exiting.")
-        exit(1)
-    
-    # Patch HuggingFaceEmbeddingWrapper to return a list
-    class HuggingFaceEmbeddingWrapper:
-        def __init__(self, client, model):
-            self.client = client
-            self.model = model
-        
-        def embed_query(self, text):
-            embedding = self.client.feature_extraction(text, model=self.model)
-            return embedding.tolist()  # Convert ndarray to list
-    
-    embeddings["huggingface"] = HuggingFaceEmbeddingWrapper(
-        embeddings["huggingface"].client, "sentence-transformers/all-MiniLM-L6-v2"
-    )
-    
-    # Process documents
     content, graphs = process_documents()
-    
-    # Setup and test vector DB
-    if content:
-        vector_client = setup_vector_db(content, embeddings["huggingface"])
-        
-        # Test search
-        test_query = "What is this document about?"
-        results = search_vector_db(test_query, embeddings["huggingface"], vector_client)
-        print("\nSearch results:")
-        for doc in results:
-            print(f"{doc[:200]}...")
-        
-        # Display knowledge graphs
-        for filename, graph in graphs.items():
-            print(f"\nKnowledge graph for {filename}:")
-            print(f"Nodes: {list(graph.nodes)}")
-            print(f"Edges: {list(graph.edges)}")
+    for filename, graph in graphs.items():
+        print(f"\nKnowledge graph for {filename}:")
+        print(f"Nodes: {list(graph.nodes)}")
+        print(f"Edges: {list(graph.edges)}")

@@ -1,10 +1,18 @@
 # api_setup.py
-from groq import Groq  # For raw client fallback if needed
+from groq import Groq
 from langchain_groq import ChatGroq
 from huggingface_hub import InferenceClient
-from langchain_huggingface.embeddings import HuggingFaceEndpointEmbeddings
 from dotenv import load_dotenv
 import os
+
+class HuggingFaceEmbeddingWrapper:
+    def __init__(self, client, model):
+        self.client = client
+        self.model = model
+    
+    def embed_query(self, text):
+        embedding = self.client.feature_extraction(text, model=self.model)
+        return embedding.tolist()  # Convert ndarray to list
 
 def setup_apis():
     """Configure Groq and Huggingface APIs."""
@@ -19,7 +27,7 @@ def setup_apis():
         try:
             llms["groq"] = ChatGroq(
                 api_key=groq_api_key,
-                model="llama-3.3-70b-versatile"  # Check Groq docs for available models
+                model="gemma2-9b-it"
             )
             print("✅ Groq API configured")
         except Exception as e:
@@ -30,15 +38,6 @@ def setup_apis():
     if hf_api_key:
         try:
             client = InferenceClient(token=hf_api_key)
-            # Wrap InferenceClient in a simple class for LangChain compatibility
-            class HuggingFaceEmbeddingWrapper:
-                def __init__(self, client, model):
-                    self.client = client
-                    self.model = model
-                
-                def embed_query(self, text):
-                    return self.client.feature_extraction(text, model=self.model)
-            
             embeddings["huggingface"] = HuggingFaceEmbeddingWrapper(
                 client, "sentence-transformers/all-MiniLM-L6-v2"
             )
@@ -50,11 +49,9 @@ def setup_apis():
 
 if __name__ == "__main__":
     llms, embeddings = setup_apis()
-    # Test Groq
     if "groq" in llms:
         response = llms["groq"].invoke("Hello, generate a simple quiz question.")
         print(f"Groq response: {response.content}")
-    # Test Huggingface embeddings
     if "huggingface" in embeddings:
         emb = embeddings["huggingface"].embed_query("Test sentence")
         print(f"Huggingface embedding length: {len(emb)}")
