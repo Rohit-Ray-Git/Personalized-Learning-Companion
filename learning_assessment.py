@@ -153,6 +153,7 @@ def assess_baseline_knowledge(llm, topic, content):
         return 0
     
     concepts = extract_key_concepts(content, topic)
+    
     # Check if concepts align with topic
     topic_lower = topic.lower()
     relevant_concepts = [c for c in concepts if topic_lower in c.lower()]
