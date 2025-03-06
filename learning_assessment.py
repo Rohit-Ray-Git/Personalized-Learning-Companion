@@ -16,7 +16,7 @@ from duckduckgo_search import DDGS
 import pickle
 import time
 import glob
-import threading  # For Windows-compatible timeout
+import threading
 
 VARK_QUESTIONS = [
     {"question": "You need to learn a new skill. How do you prefer to start?", "options": {"V": "Watch a video or see diagrams", "A": "Listen to an explanation or podcast", "R": "Read instructions or a manual", "K": "Try it hands-on with guidance"}},
@@ -131,13 +131,17 @@ def generate_questions_from_concepts(llm, concepts, topic, score, num_questions=
         response = invoke_llm_with_timeout(llm, prompt)
         if response is None:
             raise Exception("Timeout occurred")
-        print(f"Debug: Full LLM batch response: {response}")
+        # Debug: Show questions without answers
+        debug_response = re.sub(r"Correct: [A-D].*?(?=\n\n|$)", "", response, flags=re.DOTALL).strip()
+        print(f"Debug: LLM batch questions (answers hidden): {debug_response}")
     except Exception as e:
         print(f"LLM invocation failed: {e}. Using fallback questions.")
         response = (
             f"Question: How does {concepts[0]} relate to {topic}?\nOptions: A) Provides computational power B) Unrelated field C) Limits processing D) Manual method\nCorrect: A\n\n"
             f"Question: What role does {concepts[1]} play in {topic}?\nOptions: A) Supports infrastructure B) Slows development C) Increases costs D) Reduces accuracy\nCorrect: A"
         )
+        debug_response = re.sub(r"Correct: [A-D].*?(?=\n\n|$)", "", response, flags=re.DOTALL).strip()
+        print(f"Debug: Fallback questions (answers hidden): {debug_response}")
     
     question_pattern = re.compile(r"(?:\*\*Question:\*\*|Question:)\s*(.*?)\s*Options:\s*(.*?)\s*Correct:\s*([A-D])", re.DOTALL)
     matches = question_pattern.findall(response)
@@ -196,7 +200,7 @@ def assess_baseline_knowledge(llm, topic, content):
         print(f"\n⚠️ Warning: Uploaded documents (likely about cloud computing) do not align with the topic '{topic}'. Questions may reflect document content rather than the specified topic.")
     
     questions = generate_questions_from_concepts(llm, concepts, topic, 0)
-    print(f"\nAssessing your baseline knowledge of {topic}:")
+    print(f"\nAssessing your baseline knowledge of {topic} (Basic Level):")
     for q in questions:
         print(f"\nQuestion: {q['question']}")
         for opt, text in q["options"].items():
@@ -219,7 +223,8 @@ def personalize_learning(llm, topic, style, score, concepts):
     print(mind_map)
     
     questions = generate_questions_from_concepts(llm, concepts, topic, score)
-    print(f"\nPersonalized follow-up questions for your {VARK_CONTENT[style]['type']} learning style:")
+    difficulty = "basic" if score < 50 else "intermediate" if score <= 75 else "advanced"
+    print(f"\nPersonalized follow-up questions for your {VARK_CONTENT[style]['type']} learning style ({difficulty.capitalize()} Level):")
     correct = 0
     for q in questions:
         print(f"\nQuestion: {q['question']}")
