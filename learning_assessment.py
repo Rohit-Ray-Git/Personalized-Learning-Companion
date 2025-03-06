@@ -7,6 +7,7 @@ import os
 from collections import Counter
 import re
 import networkx as nx
+
 try:
     import matplotlib.pyplot as plt
     MATPLOTLIB_AVAILABLE = True
@@ -48,7 +49,7 @@ def assess_learning_style():
 def extract_key_concepts(content, topic, num_concepts=5):
     print("Extracting key concepts...")
     start_time = time.time()
-    all_text = " ".join(content.values()).lower()[:10000]  # Sample first 10K chars
+    all_text = " ".join(content.values()).lower()[:10000]
     words = re.findall(r'\b\w+\b', all_text)
     bigrams = [f"{words[i]} {words[i+1]}" for i in range(len(words)-1) if all(len(w) > 3 and w.isalpha() for w in [words[i], words[i+1]])][:100]
     
@@ -114,8 +115,15 @@ def generate_questions_from_concepts(llm, concepts, topic, score, num_questions=
     difficulty = "basic" if score < 50 else "intermediate" if score <= 75 else "advanced"
     
     prompt = f"For the topic '{topic}', generate {num_questions} {difficulty}-level multiple-choice quiz questions about the following concepts: {', '.join(concepts)}. Each question should have 4 options (A, B, C, D) and one correct answer. Ensure relevance to {topic}. Format each as: 'Question: [q] Options: A) [a] B) [b] C) [c] D) [d] Correct: [letter]' separated by newlines."
-    response = llm.invoke(prompt).content
-    print(f"Debug: LLM batch response: {response[:100]}...")
+    try:
+        response = llm.invoke(prompt, timeout=10).content  # Add 10s timeout
+        print(f"Debug: Full LLM batch response: {response}")
+    except Exception as e:
+        print(f"LLM invocation failed: {e}. Using fallback questions.")
+        response = (
+            "Question: What is a key feature of {topic}?\nOptions: A) Scalability B) Local processing C) Manual operations D) Static resources\nCorrect: A\n\n"
+            "Question: What is the purpose of {topic}?\nOptions: A) To process data efficiently B) To slow down systems C) To increase hardware costs D) To limit access\nCorrect: A"
+        ).format(topic=topic)
     
     for q_block in response.split('\n\n'):
         try:
@@ -132,6 +140,7 @@ def generate_questions_from_concepts(llm, concepts, topic, score, num_questions=
                 used_questions.add(q_part)
                 questions.append({"question": q_part, "options": options, "correct": correct_part})
         except IndexError:
+            print(f"Debug: Failed to parse question block: {q_block}")
             continue
     
     while len(questions) < num_questions:
