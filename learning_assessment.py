@@ -7,17 +7,16 @@ import os
 from collections import Counter
 import re
 import networkx as nx
-
 try:
     import matplotlib.pyplot as plt
     MATPLOTLIB_AVAILABLE = True
 except ImportError:
     MATPLOTLIB_AVAILABLE = False
-
 from duckduckgo_search import DDGS
 import pickle
 import time
 import glob
+from timeout_decorator import timeout  # New import for explicit timeout
 
 VARK_QUESTIONS = [
     {"question": "You need to learn a new skill. How do you prefer to start?", "options": {"V": "Watch a video or see diagrams", "A": "Listen to an explanation or podcast", "R": "Read instructions or a manual", "K": "Try it hands-on with guidance"}},
@@ -107,6 +106,10 @@ def search_web(topic, style):
     print(f"Web search completed (took {time.time() - start_time:.2f}s)")
     return formatted_results
 
+@timeout(10)  # 10-second timeout for LLM call
+def invoke_llm_with_timeout(llm, prompt):
+    return llm.invoke(prompt).content
+
 def generate_questions_from_concepts(llm, concepts, topic, score, num_questions=2):
     print("Generating questions...")
     start_time = time.time()
@@ -116,40 +119,40 @@ def generate_questions_from_concepts(llm, concepts, topic, score, num_questions=
     
     prompt = f"For the topic '{topic}', generate {num_questions} {difficulty}-level multiple-choice quiz questions about the following concepts: {', '.join(concepts)}. Each question should have 4 options (A, B, C, D) and one correct answer. Ensure relevance to {topic}. Format each as: 'Question: [q] Options: A) [a] B) [b] C) [c] D) [d] Correct: [letter]' separated by newlines."
     try:
-        response = llm.invoke(prompt, timeout=10).content  # Add 10s timeout
+        response = invoke_llm_with_timeout(llm, prompt)
         print(f"Debug: Full LLM batch response: {response}")
     except Exception as e:
         print(f"LLM invocation failed: {e}. Using fallback questions.")
         response = (
-            "Question: What is a key feature of {topic}?\nOptions: A) Scalability B) Local processing C) Manual operations D) Static resources\nCorrect: A\n\n"
-            "Question: What is the purpose of {topic}?\nOptions: A) To process data efficiently B) To slow down systems C) To increase hardware costs D) To limit access\nCorrect: A"
-        ).format(topic=topic)
+            f"Question: What is a key feature of {topic}?\nOptions: A) Scalability B) Local processing C) Manual operations D) Static resources\nCorrect: A\n\n"
+            f"Question: What is the purpose of {topic}?\nOptions: A) To process data efficiently B) To slow down systems C) To increase hardware costs D) To limit access\nCorrect: A"
+        )
     
-    for q_block in response.split('\n\n'):
-        try:
-            q_part = q_block.split("Question:")[1].split("Options:")[0].strip()
-            opts_part = q_block.split("Options:")[1].split("Correct:")[0].strip()
-            correct_part = q_block.split("Correct:")[1].strip()
-            options = {}
-            for line in opts_part.split('\n'):
-                if line.strip() and line[0] in "ABCD" and ")" in line:
-                    letter = line[0]
-                    text = line.split(")", 1)[1].strip()
-                    options[letter] = text
-            if q_part and len(options) == 4 and correct_part in "ABCD" and q_part not in used_questions:
-                used_questions.add(q_part)
-                questions.append({"question": q_part, "options": options, "correct": correct_part})
-        except IndexError:
-            print(f"Debug: Failed to parse question block: {q_block}")
-            continue
+    # Use regex to extract question blocks
+    question_pattern = re.compile(r"(?:\*\*Question:\*\*|Question:)\s*(.*?)\s*Options:\s*(.*?)\s*Correct:\s*([A-D])", re.DOTALL)
+    matches = question_pattern.findall(response)
     
-    while len(questions) < num_questions:
-        q_part = f"What is a key feature of {topic}?"
-        options = {"A": "Scalability", "B": "Local processing", "C": "Manual operations", "D": "Static resources"}
-        correct_part = "A"
-        if q_part not in used_questions:
+    for match in matches:
+        q_part, opts_part, correct_part = match
+        q_part = q_part.strip()
+        options = {}
+        for line in opts_part.split('\n'):
+            if line.strip() and line[0] in "ABCD" and ")" in line:
+                letter = line[0]
+                text = line.split(")", 1)[1].strip()
+                options[letter] = text
+        if q_part and len(options) == 4 and correct_part in "ABCD" and q_part not in used_questions:
             used_questions.add(q_part)
             questions.append({"question": q_part, "options": options, "correct": correct_part})
+    
+    # If no valid questions parsed, use fallback
+    if len(questions) < num_questions:
+        print("Debug: Insufficient valid questions parsed. Using fallback.")
+        fallback_questions = [
+            {"question": f"What is a key feature of {topic}?", "options": {"A": "Scalability", "B": "Local processing", "C": "Manual operations", "D": "Static resources"}, "correct": "A"},
+            {"question": f"What is the purpose of {topic}?", "options": {"A": "To process data efficiently", "B": "To slow down systems", "C": "To increase hardware costs", "D": "To limit access"}, "correct": "A"}
+        ]
+        questions.extend([q for q in fallback_questions if q["question"] not in used_questions][:num_questions - len(questions)])
     
     print(f"Question generation completed (took {time.time() - start_time:.2f}s)")
     return questions[:num_questions]
