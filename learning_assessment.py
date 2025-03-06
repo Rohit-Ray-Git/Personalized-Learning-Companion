@@ -16,7 +16,7 @@ from duckduckgo_search import DDGS
 import pickle
 import time
 import glob
-from timeout_decorator import timeout  # New import for explicit timeout
+import threading  # For Windows-compatible timeout
 
 VARK_QUESTIONS = [
     {"question": "You need to learn a new skill. How do you prefer to start?", "options": {"V": "Watch a video or see diagrams", "A": "Listen to an explanation or podcast", "R": "Read instructions or a manual", "K": "Try it hands-on with guidance"}},
@@ -106,9 +106,18 @@ def search_web(topic, style):
     print(f"Web search completed (took {time.time() - start_time:.2f}s)")
     return formatted_results
 
-@timeout(10)  # 10-second timeout for LLM call
-def invoke_llm_with_timeout(llm, prompt):
-    return llm.invoke(prompt).content
+def invoke_llm_with_timeout(llm, prompt, timeout_seconds=10):
+    result = [None]
+    def worker():
+        result[0] = llm.invoke(prompt).content
+    
+    thread = threading.Thread(target=worker)
+    thread.start()
+    thread.join(timeout_seconds)
+    if thread.is_alive():
+        print(f"LLM invocation timed out after {timeout_seconds}s")
+        return None
+    return result[0]
 
 def generate_questions_from_concepts(llm, concepts, topic, score, num_questions=2):
     print("Generating questions...")
@@ -120,15 +129,16 @@ def generate_questions_from_concepts(llm, concepts, topic, score, num_questions=
     prompt = f"For the topic '{topic}', generate {num_questions} {difficulty}-level multiple-choice quiz questions about the following concepts: {', '.join(concepts)}. Each question should have 4 options (A, B, C, D) and one correct answer. Ensure relevance to {topic}. Format each as: 'Question: [q] Options: A) [a] B) [b] C) [c] D) [d] Correct: [letter]' separated by newlines."
     try:
         response = invoke_llm_with_timeout(llm, prompt)
+        if response is None:
+            raise Exception("Timeout occurred")
         print(f"Debug: Full LLM batch response: {response}")
     except Exception as e:
         print(f"LLM invocation failed: {e}. Using fallback questions.")
         response = (
-            f"Question: What is a key feature of {topic}?\nOptions: A) Scalability B) Local processing C) Manual operations D) Static resources\nCorrect: A\n\n"
-            f"Question: What is the purpose of {topic}?\nOptions: A) To process data efficiently B) To slow down systems C) To increase hardware costs D) To limit access\nCorrect: A"
+            f"Question: How does {concepts[0]} relate to {topic}?\nOptions: A) Provides computational power B) Unrelated field C) Limits processing D) Manual method\nCorrect: A\n\n"
+            f"Question: What role does {concepts[1]} play in {topic}?\nOptions: A) Supports infrastructure B) Slows development C) Increases costs D) Reduces accuracy\nCorrect: A"
         )
     
-    # Use regex to extract question blocks
     question_pattern = re.compile(r"(?:\*\*Question:\*\*|Question:)\s*(.*?)\s*Options:\s*(.*?)\s*Correct:\s*([A-D])", re.DOTALL)
     matches = question_pattern.findall(response)
     
@@ -145,12 +155,11 @@ def generate_questions_from_concepts(llm, concepts, topic, score, num_questions=
             used_questions.add(q_part)
             questions.append({"question": q_part, "options": options, "correct": correct_part})
     
-    # If no valid questions parsed, use fallback
     if len(questions) < num_questions:
         print("Debug: Insufficient valid questions parsed. Using fallback.")
         fallback_questions = [
-            {"question": f"What is a key feature of {topic}?", "options": {"A": "Scalability", "B": "Local processing", "C": "Manual operations", "D": "Static resources"}, "correct": "A"},
-            {"question": f"What is the purpose of {topic}?", "options": {"A": "To process data efficiently", "B": "To slow down systems", "C": "To increase hardware costs", "D": "To limit access"}, "correct": "A"}
+            {"question": f"How does {concepts[0]} relate to {topic}?", "options": {"A": "Provides computational power", "B": "Unrelated field", "C": "Limits processing", "D": "Manual method"}, "correct": "A"},
+            {"question": f"What role does {concepts[1]} play in {topic}?", "options": {"A": "Supports infrastructure", "B": "Slows development", "C": "Increases costs", "D": "Reduces accuracy"}, "correct": "A"}
         ]
         questions.extend([q for q in fallback_questions if q["question"] not in used_questions][:num_questions - len(questions)])
     
@@ -181,6 +190,11 @@ def assess_baseline_knowledge(llm, topic, content):
         return 0
     
     concepts = extract_key_concepts(content, topic)
+    topic_lower = topic.lower()
+    relevant_concepts = [c for c in concepts if topic_lower in c.lower()]
+    if not relevant_concepts:
+        print(f"\n⚠️ Warning: Uploaded documents (likely about cloud computing) do not align with the topic '{topic}'. Questions may reflect document content rather than the specified topic.")
+    
     questions = generate_questions_from_concepts(llm, concepts, topic, 0)
     print(f"\nAssessing your baseline knowledge of {topic}:")
     for q in questions:
