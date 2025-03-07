@@ -131,22 +131,24 @@ def generate_questions_from_concepts(llm, concepts, topic, score, num_questions=
         response = invoke_llm_with_timeout(llm, prompt)
         if response is None:
             raise Exception("Timeout occurred")
-        # Debug: Show questions without answers
-        debug_response = re.sub(r"Correct: [A-D].*?(?=\n\n|$)", "", response, flags=re.DOTALL).strip()
+        debug_response = re.sub(r"Correct: [A-D]\)?\s*(?=\n\n|$)", "", response, flags=re.DOTALL).strip()
         print(f"Debug: LLM batch questions (answers hidden): {debug_response}")
     except Exception as e:
         print(f"LLM invocation failed: {e}. Using fallback questions.")
         response = (
-            f"Question: How does {concepts[0]} relate to {topic}?\nOptions: A) Provides computational power B) Unrelated field C) Limits processing D) Manual method\nCorrect: A\n\n"
-            f"Question: What role does {concepts[1]} play in {topic}?\nOptions: A) Supports infrastructure B) Slows development C) Increases costs D) Reduces accuracy\nCorrect: A"
+            f"Question: How does {concepts[1]} enable {topic}?\nOptions: A) Scalability and flexibility B) Increased hardware costs C) Limited access D) Manual processing\nCorrect: A\n\n"
+            f"Question: What role does {concepts[3]} play in {topic}?\nOptions: A) Algorithm development B) Hardware design C) Data storage D) Weather prediction\nCorrect: A"
         )
-        debug_response = re.sub(r"Correct: [A-D].*?(?=\n\n|$)", "", response, flags=re.DOTALL).strip()
+        debug_response = re.sub(r"Correct: [A-D]\)?\s*(?=\n\n|$)", "", response, flags=re.DOTALL).strip()
         print(f"Debug: Fallback questions (answers hidden): {debug_response}")
     
-    question_pattern = re.compile(r"(?:\*\*Question:\*\*|Question:)\s*(.*?)\s*Options:\s*(.*?)\s*Correct:\s*([A-D])", re.DOTALL)
+    # Improved regex to handle optional ) and flexible spacing
+    question_pattern = re.compile(r"(?:\*\*Question:\*\*|Question:)\s*(.+?)\s*(?:\n\s*Options:|\nOptions:)\s*(.+?)\s*(?:\n\s*Correct:|\nCorrect:)\s*([A-D])\)?\s*(?=\n\n|\n\s*$|$)", re.DOTALL)
     matches = question_pattern.findall(response)
+    if not matches:
+        print(f"Debug: No questions parsed from response. Raw response: {response}")
     
-    for match in matches:
+    for i, match in enumerate(matches):
         q_part, opts_part, correct_part = match
         q_part = q_part.strip()
         options = {}
@@ -158,12 +160,14 @@ def generate_questions_from_concepts(llm, concepts, topic, score, num_questions=
         if q_part and len(options) == 4 and correct_part in "ABCD" and q_part not in used_questions:
             used_questions.add(q_part)
             questions.append({"question": q_part, "options": options, "correct": correct_part})
+        else:
+            print(f"Debug: Failed to parse match {i}: q='{q_part}', opts={len(options)}, correct='{correct_part}'")
     
     if len(questions) < num_questions:
-        print("Debug: Insufficient valid questions parsed. Using fallback.")
+        print(f"Debug: Only {len(questions)} valid questions parsed. Using fallback.")
         fallback_questions = [
-            {"question": f"How does {concepts[0]} relate to {topic}?", "options": {"A": "Provides computational power", "B": "Unrelated field", "C": "Limits processing", "D": "Manual method"}, "correct": "A"},
-            {"question": f"What role does {concepts[1]} play in {topic}?", "options": {"A": "Supports infrastructure", "B": "Slows development", "C": "Increases costs", "D": "Reduces accuracy"}, "correct": "A"}
+            {"question": f"How does {concepts[1]} enable {topic}?", "options": {"A": "Scalability and flexibility", "B": "Increased hardware costs", "C": "Limited access", "D": "Manual processing"}, "correct": "A"},
+            {"question": f"What role does {concepts[3]} play in {topic}?", "options": {"A": "Algorithm development", "B": "Hardware design", "C": "Data storage", "D": "Weather prediction"}, "correct": "A"}
         ]
         questions.extend([q for q in fallback_questions if q["question"] not in used_questions][:num_questions - len(questions)])
     
@@ -197,7 +201,7 @@ def assess_baseline_knowledge(llm, topic, content):
     topic_lower = topic.lower()
     relevant_concepts = [c for c in concepts if topic_lower in c.lower()]
     if not relevant_concepts:
-        print(f"\n⚠️ Warning: Uploaded documents (likely about cloud computing) do not align with the topic '{topic}'. Questions may reflect document content rather than the specified topic.")
+        print(f"\n⚠️ Warning: Uploaded documents (likely not about {topic}) do not align with the topic '{topic}'. Questions may reflect document content rather than the specified topic.")
     
     questions = generate_questions_from_concepts(llm, concepts, topic, 0)
     print(f"\nAssessing your baseline knowledge of {topic} (Basic Level):")
