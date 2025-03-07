@@ -17,6 +17,7 @@ import pickle
 import time
 import glob
 import threading
+import numpy as np
 
 VARK_QUESTIONS = [
     {"question": "You need to learn a new skill. How do you prefer to start?", "options": {"V": "Watch a video or see diagrams", "A": "Listen to an explanation or podcast", "R": "Read instructions or a manual", "K": "Try it hands-on with guidance"}},
@@ -45,7 +46,7 @@ def assess_learning_style():
     print(f"Dominant style: {dominant_style}")
     return dominant_style
 
-def extract_key_concepts(content, topic, num_concepts=5):
+def extract_key_concepts(content, topic, embedding_model, num_concepts=5):
     print("Extracting key concepts...")
     start_time = time.time()
     all_text = " ".join(content.values()).lower()[:10000] if content else ""
@@ -56,14 +57,19 @@ def extract_key_concepts(content, topic, num_concepts=5):
     phrase_counts = Counter(bigrams)
     
     topic_lower = topic.lower()
-    topic_concepts = [c for c in phrase_counts.keys() if topic_lower in c and not any(sw in c.split() for sw in stop_words)]
-    if len(topic_concepts) < num_concepts:
-        additional_concepts = [c for c in phrase_counts.keys() if not any(sw in c.split() for sw in stop_words)]
-        topic_concepts.extend(additional_concepts)
+    candidates = [c for c in phrase_counts.keys() if not any(sw in c.split() for sw in stop_words)]
+    if not candidates and not content:
+        candidates = [f"{topic_lower} {i+1}" for i in range(num_concepts)]
     
-    unique_concepts = list(dict.fromkeys(topic_concepts))[:num_concepts]
-    if len(unique_concepts) < num_concepts and not content:
-        unique_concepts.extend([f"{topic_lower} {i+1}" for i in range(num_concepts - len(unique_concepts))])
+    # Use embeddings to rank relevance
+    if candidates and embedding_model:
+        topic_embedding = embedding_model.embed_query(topic_lower)
+        candidate_embeddings = [embedding_model.embed_query(c) for c in candidates]
+        similarities = [np.dot(topic_embedding, c_emb) / (np.linalg.norm(topic_embedding) * np.linalg.norm(c_emb)) for c_emb in candidate_embeddings]
+        ranked = sorted(zip(candidates, similarities), key=lambda x: x[1], reverse=True)
+        unique_concepts = [c for c, _ in ranked][:num_concepts]
+    else:
+        unique_concepts = list(dict.fromkeys(candidates))[:num_concepts]
     
     print(f"Debug: Extracted key concepts: {unique_concepts} (took {time.time() - start_time:.2f}s)")
     return unique_concepts
@@ -194,16 +200,22 @@ def load_or_process_documents():
     print(f"Document processing completed (took {time.time() - start_time:.2f}s)")
     return content, graphs
 
-def assess_knowledge(llm, topic, content, score, phase="Baseline", used_questions=None):
+def assess_knowledge(llm, topic, content, embedding_model, score, phase="Baseline", used_questions=None):
     correct = 0
     if not content:
         print(f"\nNo documents uploaded for '{topic}'. Using topic-based fallback concepts.")
     
-    concepts = extract_key_concepts(content, topic)
+    concepts = extract_key_concepts(content, topic, embedding_model)
     topic_lower = topic.lower()
     relevant_concepts = [c for c in concepts if topic_lower in c.lower()]
     if not relevant_concepts:
         print(f"\n⚠️ Warning: Uploaded documents (if any) do not align with '{topic}'. Questions may be generic.")
+        confirm = input(f"Concepts extracted: {concepts}. Do these look relevant to '{topic}'? (yes/no): ").lower()
+        if confirm != "yes":
+            print("Please upload relevant documents to 'data/raw/' and press Enter to retry...")
+            input()
+            content, _ = load_or_process_documents()
+            concepts = extract_key_concepts(content, topic, embedding_model)
     
     questions, used_questions = generate_questions_from_concepts(llm, concepts, topic, score, used_questions=used_questions)
     difficulty = "basic" if score < 50 else "intermediate" if score <= 75 else "advanced"
@@ -229,17 +241,17 @@ def assess_knowledge(llm, topic, content, score, phase="Baseline", used_question
     print(f"{phase} knowledge score for {topic}: {score}%")
     return score, used_questions, incorrect_concepts
 
-def personalize_learning(llm, topic, style, baseline_score, content):
+def personalize_learning(llm, topic, style, baseline_score, content, embedding_model):
     used_questions = set()
     score = baseline_score
-    concepts = extract_key_concepts(content, topic)
+    concepts = extract_key_concepts(content, topic, embedding_model)
     
     while True:
         mind_map = generate_mind_map(concepts, topic)
         print("\nGenerated Mind Map:")
         print(mind_map)
         
-        phase_score, used_questions, incorrect_concepts = assess_knowledge(llm, topic, content, score, phase="Follow-up", used_questions=used_questions)
+        phase_score, used_questions, incorrect_concepts = assess_knowledge(llm, topic, content, embedding_model, score, phase="Follow-up", used_questions=used_questions)
         score = max(score, phase_score)
         
         resources = search_web(topic, style)
@@ -257,6 +269,22 @@ def personalize_learning(llm, topic, style, baseline_score, content):
             concepts = incorrect_concepts
     
     return score
+
+def review_progress(name):
+    engine, Session = setup_database()
+    session = Session()
+    user = session.query(UserProfile).filter_by(name=name).first()
+    if not user:
+        print("No progress found for this user yet.")
+        return
+    print(f"\nProgress Review for {name}:")
+    progresses = session.query(Progress).filter_by(user_id=user.id).order_by(Progress.last_updated).all()
+    for p in progresses:
+        print(f"Topic: {p.subject}, Phase: {p.phase}, Score: {p.score}%, Updated: {p.last_updated}")
+    weak_areas = [p.subject for p in progresses if p.score < 75]
+    if weak_areas:
+        print(f"Suggested topics to revisit: {', '.join(set(weak_areas))}")
+    session.close()
 
 def update_user_profile(name, learning_style, topic, baseline_score, final_score):
     engine, Session = setup_database()
@@ -281,17 +309,19 @@ def update_user_profile(name, learning_style, topic, baseline_score, final_score
 
 if __name__ == "__main__":
     llms, embeddings = setup_apis()
-    if not llms.get("groq"):
-        print("❌ Required LLM not available. Exiting.")
+    if not llms.get("groq") or not embeddings.get("huggingface"):
+        print("❌ Required APIs not available. Exiting.")
         exit(1)
     
     name = input("Enter your name: ")
+    review_progress(name)
     topic = input("What topic would you like to learn about? (e.g., 'General', 'Machine Learning'): ")
     style = assess_learning_style()
     print("\nPlease upload study materials to 'data/raw/' for your topic (optional).")
     input("Press Enter once files are uploaded or to proceed without files...")
     
     content, graphs = load_or_process_documents()
-    baseline_score, used_questions, _ = assess_knowledge(llms["groq"], topic, content, 0, phase="Baseline")  # Unpack all three
-    final_score = personalize_learning(llms["groq"], topic, style, baseline_score, content)
+    embedding_model = embeddings["huggingface"]
+    baseline_score, used_questions, _ = assess_knowledge(llms["groq"], topic, content, embedding_model, 0, phase="Baseline")
+    final_score = personalize_learning(llms["groq"], topic, style, baseline_score, content, embedding_model)
     update_user_profile(name, style, topic, baseline_score, final_score)
