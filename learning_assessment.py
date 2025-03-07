@@ -48,7 +48,7 @@ def assess_learning_style():
 def extract_key_concepts(content, topic, num_concepts=5):
     print("Extracting key concepts...")
     start_time = time.time()
-    all_text = " ".join(content.values()).lower()[:10000]
+    all_text = " ".join(content.values()).lower()[:10000] if content else ""
     words = re.findall(r'\b\w+\b', all_text)
     bigrams = [f"{words[i]} {words[i+1]}" for i in range(len(words)-1) if all(len(w) > 3 and w.isalpha() for w in [words[i], words[i+1]])][:100]
     
@@ -62,6 +62,9 @@ def extract_key_concepts(content, topic, num_concepts=5):
         topic_concepts.extend(additional_concepts)
     
     unique_concepts = list(dict.fromkeys(topic_concepts))[:num_concepts]
+    if len(unique_concepts) < num_concepts and not content:
+        unique_concepts.extend([f"{topic_lower} {i+1}" for i in range(num_concepts - len(unique_concepts))])
+    
     print(f"Debug: Extracted key concepts: {unique_concepts} (took {time.time() - start_time:.2f}s)")
     return unique_concepts
 
@@ -137,8 +140,8 @@ def generate_questions_from_concepts(llm, concepts, topic, score, num_questions=
     except Exception as e:
         print(f"LLM invocation failed: {e}. Using fallback questions.")
         response = (
-            f"Question: How does {concepts[1]} enable {topic}?\nOptions: A) Scalability and flexibility B) Increased hardware costs C) Limited access D) Manual processing\nCorrect: A\n\n"
-            f"Question: What role does {concepts[3]} play in {topic}?\nOptions: A) Algorithm development B) Hardware design C) Data storage D) Weather prediction\nCorrect: A"
+            f"Question: How does {concepts[0]} enable {topic}?\nOptions: A) Scalability and flexibility B) Increased hardware costs C) Limited access D) Manual processing\nCorrect: A\n\n"
+            f"Question: What role does {concepts[1 if len(concepts) > 1 else 0]} play in {topic}?\nOptions: A) Algorithm development B) Hardware design C) Data storage D) Weather prediction\nCorrect: A"
         )
         debug_response = re.sub(r"Correct: [A-D]\)?\s*(?=\n\n|$)", "", response, flags=re.DOTALL).strip()
         print(f"Debug: Fallback questions (answers hidden): {debug_response}")
@@ -166,8 +169,8 @@ def generate_questions_from_concepts(llm, concepts, topic, score, num_questions=
     if len(questions) < num_questions:
         print(f"Debug: Only {len(questions)} valid questions parsed. Using fallback.")
         fallback_questions = [
-            {"question": f"How does {concepts[1]} enable {topic}?", "options": {"A": "Scalability and flexibility", "B": "Increased hardware costs", "C": "Limited access", "D": "Manual processing"}, "correct": "A"},
-            {"question": f"What role does {concepts[3]} play in {topic}?", "options": {"A": "Algorithm development", "B": "Hardware design", "C": "Data storage", "D": "Weather prediction"}, "correct": "A"}
+            {"question": f"How does {concepts[0]} enable {topic}?", "options": {"A": "Scalability and flexibility", "B": "Increased hardware costs", "C": "Limited access", "D": "Manual processing"}, "correct": "A"},
+            {"question": f"What role does {concepts[1 if len(concepts) > 1 else 0]} play in {topic}?", "options": {"A": "Algorithm development", "B": "Hardware design", "C": "Data storage", "D": "Weather prediction"}, "correct": "A"}
         ]
         questions.extend([q for q in fallback_questions if q["question"] not in used_questions][:num_questions - len(questions)])
     
@@ -191,45 +194,21 @@ def load_or_process_documents():
     print(f"Document processing completed (took {time.time() - start_time:.2f}s)")
     return content, graphs
 
-def assess_baseline_knowledge(llm, topic, content):
+def assess_knowledge(llm, topic, content, score, phase="Baseline", used_questions=None):
     correct = 0
     if not content:
-        print(f"\nNo documents uploaded for '{topic}'. Skipping assessment.")
-        return 0
+        print(f"\nNo documents uploaded for '{topic}'. Using topic-based fallback concepts.")
     
     concepts = extract_key_concepts(content, topic)
     topic_lower = topic.lower()
     relevant_concepts = [c for c in concepts if topic_lower in c.lower()]
     if not relevant_concepts:
-        print(f"\n⚠️ Warning: Uploaded documents (likely not about {topic}) do not align with the topic '{topic}'. Questions may reflect document content rather than the specified topic.")
-    
-    questions, used_questions = generate_questions_from_concepts(llm, concepts, topic, 0)
-    print(f"\nAssessing your baseline knowledge of {topic} (Basic Level):")
-    for q in questions:
-        print(f"\nQuestion: {q['question']}")
-        for opt, text in q["options"].items():
-            print(f"{opt}) {text}")
-        user_answer = input("Your answer (A/B/C/D): ").strip().upper()
-        correct_answer = q["correct"]
-        if user_answer == correct_answer:
-            correct += 1
-            print("Correct!")
-        else:
-            print(f"Incorrect. The correct answer is '{correct_answer}' ({q['options'][correct_answer]}).")
-    
-    score = (correct / len(questions)) * 100
-    print(f"Baseline knowledge score for {topic}: {score}%")
-    return score, used_questions
-
-def personalize_learning(llm, topic, style, score, concepts, used_questions):
-    mind_map = generate_mind_map(concepts, topic)
-    print("\nGenerated Mind Map:")
-    print(mind_map)
+        print(f"\n⚠️ Warning: Uploaded documents (if any) do not align with '{topic}'. Questions may be generic.")
     
     questions, used_questions = generate_questions_from_concepts(llm, concepts, topic, score, used_questions=used_questions)
     difficulty = "basic" if score < 50 else "intermediate" if score <= 75 else "advanced"
-    print(f"\nPersonalized follow-up questions for your {VARK_CONTENT[style]['type']} learning style ({difficulty.capitalize()} Level):")
-    correct = 0
+    print(f"\nAssessing your {phase.lower()} knowledge of {topic} ({difficulty.capitalize()} Level):")
+    incorrect_concepts = []
     for q in questions:
         print(f"\nQuestion: {q['question']}")
         for opt, text in q["options"].items():
@@ -241,17 +220,45 @@ def personalize_learning(llm, topic, style, score, concepts, used_questions):
             print("Correct!")
         else:
             print(f"Incorrect. The correct answer is '{correct_answer}' ({q['options'][correct_answer]}).")
-    follow_up_score = (correct / len(questions)) * 100
-    print(f"Follow-up score: {follow_up_score}%")
+            for concept in concepts:
+                if concept.lower() in q["question"].lower():
+                    incorrect_concepts.append(concept)
+                    break
     
-    resources = search_web(topic, style)
-    print(f"\nRecommended {VARK_CONTENT[style]['type']} resources for {topic}:")
-    for i, res in enumerate(resources, 1):
-        print(f"{i}. {res['title']} - {res['url']}\n   {res['description']}")
-    
-    return follow_up_score
+    score = (correct / len(questions)) * 100
+    print(f"{phase} knowledge score for {topic}: {score}%")
+    return score, used_questions, incorrect_concepts
 
-def update_user_profile(name, learning_style, topic, score):
+def personalize_learning(llm, topic, style, baseline_score, content):
+    used_questions = set()
+    score = baseline_score
+    concepts = extract_key_concepts(content, topic)
+    
+    while True:
+        mind_map = generate_mind_map(concepts, topic)
+        print("\nGenerated Mind Map:")
+        print(mind_map)
+        
+        phase_score, used_questions, incorrect_concepts = assess_knowledge(llm, topic, content, score, phase="Follow-up", used_questions=used_questions)
+        score = max(score, phase_score)
+        
+        resources = search_web(topic, style)
+        print(f"\nRecommended {VARK_CONTENT[style]['type']} resources for {topic}:")
+        for i, res in enumerate(resources, 1):
+            print(f"{i}. {res['title']} - {res['url']}\n   {res['description']}")
+        
+        if phase_score == 100 or not incorrect_concepts:
+            print("\nGreat job! You've mastered this set.")
+            break
+        else:
+            retry = input(f"\nYou scored {phase_score}%. Would you like to retry questions on {', '.join(incorrect_concepts)}? (yes/no): ").lower()
+            if retry != "yes":
+                break
+            concepts = incorrect_concepts
+    
+    return score
+
+def update_user_profile(name, learning_style, topic, baseline_score, final_score):
     engine, Session = setup_database()
     session = Session()
     user = session.query(UserProfile).filter_by(name=name).first()
@@ -261,10 +268,14 @@ def update_user_profile(name, learning_style, topic, score):
     else:
         user.learning_style = learning_style
     session.commit()
-    progress = Progress(user_id=user.id, subject=topic, score=score)
-    session.add(progress)
+    
+    baseline_progress = Progress(user_id=user.id, subject=topic, score=baseline_score, phase="baseline")
+    final_progress = Progress(user_id=user.id, subject=topic, score=final_score, phase="follow-up")
+    session.add(baseline_progress)
+    session.add(final_progress)
     session.commit()
-    print(f"Updated profile for {name} (ID: {user.id}) with style {learning_style} and score {score}%")
+    
+    print(f"Updated profile for {name} (ID: {user.id}) with style {learning_style}, baseline score {baseline_score}%, final score {final_score}%")
     session.close()
     return user.id
 
@@ -277,12 +288,10 @@ if __name__ == "__main__":
     name = input("Enter your name: ")
     topic = input("What topic would you like to learn about? (e.g., 'General', 'Machine Learning'): ")
     style = assess_learning_style()
-    print("\nPlease upload study materials to 'data/raw/' for your topic.")
-    input("Press Enter once files are uploaded...")
+    print("\nPlease upload study materials to 'data/raw/' for your topic (optional).")
+    input("Press Enter once files are uploaded or to proceed without files...")
     
     content, graphs = load_or_process_documents()
-    baseline_score, used_questions = assess_baseline_knowledge(llms["groq"], topic, content)
-    if content:
-        concepts = extract_key_concepts(content, topic)
-        follow_up_score = personalize_learning(llms["groq"], topic, style, baseline_score, concepts, used_questions)
-    update_user_profile(name, style, topic, baseline_score)
+    baseline_score, used_questions, _ = assess_knowledge(llms["groq"], topic, content, 0, phase="Baseline")  # Unpack all three
+    final_score = personalize_learning(llms["groq"], topic, style, baseline_score, content)
+    update_user_profile(name, style, topic, baseline_score, final_score)

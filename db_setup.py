@@ -1,41 +1,33 @@
 # db_setup.py
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-import datetime
-import os
+from datetime import datetime
 
 Base = declarative_base()
 
 class UserProfile(Base):
-    __tablename__ = "user_profiles"
+    __tablename__ = "users"
     id = Column(Integer, primary_key=True)
-    name = Column(String, nullable=False)
+    name = Column(String, unique=True)
     learning_style = Column(String)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    last_updated = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 class Progress(Base):
     __tablename__ = "progress"
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer)
+    user_id = Column(Integer, ForeignKey("users.id"))
     subject = Column(String)
     score = Column(Float)
-    last_updated = Column(DateTime, default=datetime.datetime.utcnow)
+    phase = Column(String)
+    last_updated = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
-def setup_database(db_path="sqlite:///data/learning_companion.db"):
-    """Set up SQLite database."""
-    os.makedirs("data", exist_ok=True)
-    engine = create_engine(db_path)
+def setup_database():
+    engine = create_engine("sqlite:///learning_companion.db")
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     return engine, Session
 
 if __name__ == "__main__":
     engine, Session = setup_database()
-    session = Session()
-    # Add a test user
-    test_user = UserProfile(name="Test User", learning_style="Visual")
-    session.add(test_user)
-    session.commit()
-    print(f"Added test user with ID: {test_user.id}")
-    session.close()
+    print("Database setup complete.")
