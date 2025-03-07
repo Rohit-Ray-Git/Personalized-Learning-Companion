@@ -52,7 +52,7 @@ def extract_key_concepts(content, topic, num_concepts=5):
     words = re.findall(r'\b\w+\b', all_text)
     bigrams = [f"{words[i]} {words[i+1]}" for i in range(len(words)-1) if all(len(w) > 3 and w.isalpha() for w in [words[i], words[i+1]])][:100]
     
-    stop_words = {"this", "that", "with", "from", "which", "about", "editors", "published", "university", "handbook", "borko", "furht", "armando", "escalante"}
+    stop_words = {"this", "that", "with", "from", "which", "about", "editors", "published", "university", "handbook", "borko", "furht", "armando", "escalante", "science", "florida"}
     phrase_counts = Counter(bigrams)
     
     topic_lower = topic.lower()
@@ -119,14 +119,15 @@ def invoke_llm_with_timeout(llm, prompt, timeout_seconds=10):
         return None
     return result[0]
 
-def generate_questions_from_concepts(llm, concepts, topic, score, num_questions=2):
+def generate_questions_from_concepts(llm, concepts, topic, score, num_questions=2, used_questions=None):
+    if used_questions is None:
+        used_questions = set()
     print("Generating questions...")
     start_time = time.time()
     questions = []
-    used_questions = set()
-    difficulty = "basic" if score < 50 else "intermediate" if score <= 75 else "advanced"
     
-    prompt = f"For the topic '{topic}', generate {num_questions} {difficulty}-level multiple-choice quiz questions about the following concepts: {', '.join(concepts)}. Each question should have 4 options (A, B, C, D) and one correct answer. Ensure relevance to {topic}. Format each as: 'Question: [q] Options: A) [a] B) [b] C) [c] D) [d] Correct: [letter]' separated by newlines."
+    difficulty = "basic" if score < 50 else "intermediate" if score <= 75 else "advanced"
+    prompt = f"For the topic '{topic}', generate {num_questions} {difficulty}-level multiple-choice quiz questions about the following concepts: {', '.join(concepts)}. Each question should have 4 options (A, B, C, D) and one correct answer. Avoid repeating these questions: {', '.join(used_questions) if used_questions else 'none'}. Ensure relevance to {topic}. Format each as: 'Question: [q] Options: A) [a] B) [b] C) [c] D) [d] Correct: [letter]' separated by newlines."
     try:
         response = invoke_llm_with_timeout(llm, prompt)
         if response is None:
@@ -142,7 +143,6 @@ def generate_questions_from_concepts(llm, concepts, topic, score, num_questions=
         debug_response = re.sub(r"Correct: [A-D]\)?\s*(?=\n\n|$)", "", response, flags=re.DOTALL).strip()
         print(f"Debug: Fallback questions (answers hidden): {debug_response}")
     
-    # Improved regex to handle optional ) and flexible spacing
     question_pattern = re.compile(r"(?:\*\*Question:\*\*|Question:)\s*(.+?)\s*(?:\n\s*Options:|\nOptions:)\s*(.+?)\s*(?:\n\s*Correct:|\nCorrect:)\s*([A-D])\)?\s*(?=\n\n|\n\s*$|$)", re.DOTALL)
     matches = question_pattern.findall(response)
     if not matches:
@@ -172,7 +172,7 @@ def generate_questions_from_concepts(llm, concepts, topic, score, num_questions=
         questions.extend([q for q in fallback_questions if q["question"] not in used_questions][:num_questions - len(questions)])
     
     print(f"Question generation completed (took {time.time() - start_time:.2f}s)")
-    return questions[:num_questions]
+    return questions[:num_questions], used_questions
 
 def load_or_process_documents():
     cache_file = "data/processed_content.pkl"
@@ -203,7 +203,7 @@ def assess_baseline_knowledge(llm, topic, content):
     if not relevant_concepts:
         print(f"\n⚠️ Warning: Uploaded documents (likely not about {topic}) do not align with the topic '{topic}'. Questions may reflect document content rather than the specified topic.")
     
-    questions = generate_questions_from_concepts(llm, concepts, topic, 0)
+    questions, used_questions = generate_questions_from_concepts(llm, concepts, topic, 0)
     print(f"\nAssessing your baseline knowledge of {topic} (Basic Level):")
     for q in questions:
         print(f"\nQuestion: {q['question']}")
@@ -219,14 +219,14 @@ def assess_baseline_knowledge(llm, topic, content):
     
     score = (correct / len(questions)) * 100
     print(f"Baseline knowledge score for {topic}: {score}%")
-    return score
+    return score, used_questions
 
-def personalize_learning(llm, topic, style, score, concepts):
+def personalize_learning(llm, topic, style, score, concepts, used_questions):
     mind_map = generate_mind_map(concepts, topic)
     print("\nGenerated Mind Map:")
     print(mind_map)
     
-    questions = generate_questions_from_concepts(llm, concepts, topic, score)
+    questions, used_questions = generate_questions_from_concepts(llm, concepts, topic, score, used_questions=used_questions)
     difficulty = "basic" if score < 50 else "intermediate" if score <= 75 else "advanced"
     print(f"\nPersonalized follow-up questions for your {VARK_CONTENT[style]['type']} learning style ({difficulty.capitalize()} Level):")
     correct = 0
@@ -248,6 +248,8 @@ def personalize_learning(llm, topic, style, score, concepts):
     print(f"\nRecommended {VARK_CONTENT[style]['type']} resources for {topic}:")
     for i, res in enumerate(resources, 1):
         print(f"{i}. {res['title']} - {res['url']}\n   {res['description']}")
+    
+    return follow_up_score
 
 def update_user_profile(name, learning_style, topic, score):
     engine, Session = setup_database()
@@ -279,8 +281,8 @@ if __name__ == "__main__":
     input("Press Enter once files are uploaded...")
     
     content, graphs = load_or_process_documents()
-    score = assess_baseline_knowledge(llms["groq"], topic, content)
+    baseline_score, used_questions = assess_baseline_knowledge(llms["groq"], topic, content)
     if content:
         concepts = extract_key_concepts(content, topic)
-        personalize_learning(llms["groq"], topic, style, score, concepts)
-    update_user_profile(name, style, topic, score)
+        follow_up_score = personalize_learning(llms["groq"], topic, style, baseline_score, concepts, used_questions)
+    update_user_profile(name, style, topic, baseline_score)
