@@ -66,7 +66,9 @@ def extract_key_concepts(content, topic, embedding_model, num_concepts=5):
         candidate_embeddings = [embedding_model.embed_query(c) for c in candidates]
         similarities = [np.dot(topic_embedding, c_emb) / (np.linalg.norm(topic_embedding) * np.linalg.norm(c_emb)) for c_emb in candidate_embeddings]
         ranked = sorted(zip(candidates, similarities), key=lambda x: x[1], reverse=True)
-        unique_concepts = [c for c, _ in ranked][:num_concepts]
+        unique_concepts = [c for c, s in ranked if s > 0.7][:num_concepts]  # Similarity threshold
+        if len(unique_concepts) < num_concepts:
+            unique_concepts.extend([c for c, _ in ranked[num_concepts:]][:num_concepts - len(unique_concepts)])
     else:
         unique_concepts = list(dict.fromkeys(candidates))[:num_concepts]
     
@@ -155,7 +157,8 @@ def generate_questions_from_concepts(llm, concepts, topic, score, num_questions=
         debug_response = re.sub(r"Correct: [A-D]\)?\s*(?=\n\n|$)", "", response, flags=re.DOTALL).strip()
         print(f"Debug: Fallback questions (answers hidden): {debug_response}")
     
-    question_pattern = re.compile(r"(?:\*\*Question(?: \d+)?:\*\*|Question:)\s*(.+?)\s*(?:\n\s*Options:|\nOptions:)\s*(.+?)\s*(?:\n\s*Correct:|\nCorrect:)\s*([A-D])\)?\s*(?:\n|$)", re.DOTALL)
+    # Updated regex to handle more formats
+    question_pattern = re.compile(r"(?:\*\*Question(?: \d+)?:\*\*|## Question \d+:|Question:)\s*(.+?)\s*(?:\n\s*\*\*Options:\*\*|\n\s*Options:|\nOptions:)\s*(.+?)\s*(?:\n\s*\*\*Correct:\*\*|\n\s*Correct:|\nCorrect:)\s*([A-D])\)?\s*(?:\n|$)", re.DOTALL)
     matches = question_pattern.findall(response)
     if not matches:
         print(f"Debug: No questions parsed from response. Raw response: {response}")
@@ -165,7 +168,8 @@ def generate_questions_from_concepts(llm, concepts, topic, score, num_questions=
         q_part = q_part.strip()
         options = {}
         for line in opts_part.split('\n'):
-            if line.strip() and line[0] in "ABCD" and ")" in line:
+            line = line.strip()
+            if line and line[0] in "ABCD" and ")" in line:
                 letter = line[0]
                 text = line.split(")", 1)[1].strip()
                 options[letter] = text
@@ -259,7 +263,7 @@ def personalize_learning(llm, topic, style, baseline_score, content, embedding_m
         print(mind_map)
         
         phase_score, used_questions, incorrect_concepts = assess_knowledge(llm, topic, content, embedding_model, score, style, phase="Follow-up", used_questions=used_questions)
-        score = max(score, phase_score)
+        score = phase_score  # Update score to latest
         
         resources = search_web(topic, style, grok_instance)
         print(f"\nRecommended {VARK_CONTENT[style]['type']} resources for {topic}:")
@@ -271,6 +275,7 @@ def personalize_learning(llm, topic, style, baseline_score, content, embedding_m
             review = input("Would you like to review the concepts again? (yes/no): ").lower()
             if review == "yes":
                 phase_score, used_questions, incorrect_concepts = assess_knowledge(llm, topic, content, embedding_model, score, style, phase="Review", used_questions=used_questions)
+                score = phase_score
             break
         else:
             retry = input(f"\nYou scored {phase_score}%. Would you like to retry questions on {', '.join(incorrect_concepts)}? (yes/no): ").lower()
@@ -317,21 +322,43 @@ def update_user_profile(name, learning_style, topic, baseline_score, final_score
     session.close()
     return user.id
 
-if __name__ == "__main__":
+def main_menu():
     llms, embeddings = setup_apis()
     if not llms.get("groq") or not embeddings.get("huggingface"):
         print("❌ Required APIs not available. Exiting.")
         exit(1)
     
-    name = input("Enter your name: ")
-    review_progress(name)
-    topic = input("What topic would you like to learn about? (e.g., 'General', 'Machine Learning'): ")
-    style = assess_learning_style()
-    print("\nPlease upload study materials to 'data/raw/' for your topic (optional).")
-    input("Press Enter once files are uploaded or to proceed without files...")
-    
-    content, graphs = load_or_process_documents()
-    embedding_model = embeddings["huggingface"]
-    baseline_score, used_questions, _ = assess_knowledge(llms["groq"], topic, content, embedding_model, 0, style, phase="Baseline")
-    final_score = personalize_learning(llms["groq"], topic, style, baseline_score, content, embedding_model, llms["groq"])
-    update_user_profile(name, style, topic, baseline_score, final_score)
+    while True:
+        print("\n=== Personalized Learning Companion ===")
+        print("1. Start Learning")
+        print("2. Review Progress")
+        print("3. Exit")
+        choice = input("Enter your choice (1-3): ").strip()
+        
+        if choice == "1":
+            name = input("Enter your name: ")
+            review_progress(name)
+            topic = input("What topic would you like to learn about? (e.g., 'General', 'Machine Learning'): ")
+            style = assess_learning_style()
+            print("\nPlease upload study materials to 'data/raw/' for your topic (optional).")
+            input("Press Enter once files are uploaded or to proceed without files...")
+            
+            content, graphs = load_or_process_documents()
+            embedding_model = embeddings["huggingface"]
+            baseline_score, used_questions, _ = assess_knowledge(llms["groq"], topic, content, embedding_model, 0, style, phase="Baseline")
+            final_score = personalize_learning(llms["groq"], topic, style, baseline_score, content, embedding_model, llms["groq"])
+            update_user_profile(name, style, topic, baseline_score, final_score)
+        
+        elif choice == "2":
+            name = input("Enter your name: ")
+            review_progress(name)
+        
+        elif choice == "3":
+            print("Goodbye!")
+            break
+        
+        else:
+            print("Invalid choice. Please try again.")
+
+if __name__ == "__main__":
+    main_menu()
