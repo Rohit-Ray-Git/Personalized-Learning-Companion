@@ -110,7 +110,6 @@ def search_web(topic, style, grok_instance):
         ]
     except Exception as e:
         print(f"DuckDuckGo search failed: {e}. Using Grok's mock X search...")
-        # Mock X search using Grok
         formatted_results = [
             {"title": f"X Post on {topic}", "url": "https://x.com", "description": f"A recent post: 'Loving this {VARK_CONTENT[style]['type']} {topic} tutorial!'"},
             {"title": f"X Post on {topic}", "url": "https://x.com", "description": f"Check out this {VARK_CONTENT[style]['keywords'][0]} on {topic}!"},
@@ -202,7 +201,7 @@ def load_or_process_documents(force_reprocess=False):
     with open(cache_file, 'rb') as f:
         return pickle.load(f)
 
-def assess_knowledge(llm, topic, content, embedding_model, score, phase="Baseline", used_questions=None):
+def assess_knowledge(llm, topic, content, embedding_model, score, style, phase="Baseline", used_questions=None):
     correct = 0
     if not content:
         print(f"\nNo documents uploaded for '{topic}'. Using topic-based fallback concepts.")
@@ -242,8 +241,7 @@ def assess_knowledge(llm, topic, content, embedding_model, score, phase="Baselin
     score = (correct / len(questions)) * 100
     print(f"{phase} knowledge score for {topic}: {score}%")
     
-    # Mock image generation for visual learners
-    if "V" in assess_learning_style.__defaults__[0]:  # Check if V is in default scores
+    if style == "V":
         print("Would you like me to generate a diagram of these concepts? (yes/no): ")
         if input().lower() == "yes":
             print(f"[Mock Image]: A diagram showing '{topic}' with nodes for {', '.join(concepts)} connected by edges.")
@@ -260,7 +258,7 @@ def personalize_learning(llm, topic, style, baseline_score, content, embedding_m
         print("\nGenerated Mind Map:")
         print(mind_map)
         
-        phase_score, used_questions, incorrect_concepts = assess_knowledge(llm, topic, content, embedding_model, score, phase="Follow-up", used_questions=used_questions)
+        phase_score, used_questions, incorrect_concepts = assess_knowledge(llm, topic, content, embedding_model, score, style, phase="Follow-up", used_questions=used_questions)
         score = max(score, phase_score)
         
         resources = search_web(topic, style, grok_instance)
@@ -272,7 +270,7 @@ def personalize_learning(llm, topic, style, baseline_score, content, embedding_m
             print("\nGreat job! You've mastered this set.")
             review = input("Would you like to review the concepts again? (yes/no): ").lower()
             if review == "yes":
-                phase_score, used_questions, incorrect_concepts = assess_knowledge(llm, topic, content, embedding_model, score, phase="Review", used_questions=used_questions)
+                phase_score, used_questions, incorrect_concepts = assess_knowledge(llm, topic, content, embedding_model, score, style, phase="Review", used_questions=used_questions)
             break
         else:
             retry = input(f"\nYou scored {phase_score}%. Would you like to retry questions on {', '.join(incorrect_concepts)}? (yes/no): ").lower()
@@ -334,6 +332,6 @@ if __name__ == "__main__":
     
     content, graphs = load_or_process_documents()
     embedding_model = embeddings["huggingface"]
-    baseline_score, used_questions, _ = assess_knowledge(llms["groq"], topic, content, embedding_model, 0, phase="Baseline")
+    baseline_score, used_questions, _ = assess_knowledge(llms["groq"], topic, content, embedding_model, 0, style, phase="Baseline")
     final_score = personalize_learning(llms["groq"], topic, style, baseline_score, content, embedding_model, llms["groq"])
     update_user_profile(name, style, topic, baseline_score, final_score)
