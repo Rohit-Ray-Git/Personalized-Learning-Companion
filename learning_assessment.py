@@ -51,7 +51,7 @@ def extract_key_concepts(content, topic, embedding_model, num_concepts=5):
     start_time = time.time()
     all_text = " ".join(content.values()).lower()[:10000] if content else ""
     words = re.findall(r'\b\w+\b', all_text)
-    bigrams = [f"{words[i]} {words[i+1]}" for i in range(len(words)-1) if all(len(w) > 3 and w.isalpha() for w in [words[i], words[i+1]])][:100]
+    bigrams = [" ".join([words[i], words[i+1]]) for i in range(len(words)-1) if all(len(w) > 3 and w.isalpha() for w in [words[i], words[i+1]])][:100]
     
     stop_words = {"this", "that", "with", "from", "which", "about", "editors", "published", "university", "handbook", "borko", "furht", "armando", "escalante", "science", "florida"}
     phrase_counts = Counter(bigrams)
@@ -61,7 +61,6 @@ def extract_key_concepts(content, topic, embedding_model, num_concepts=5):
     if not candidates and not content:
         candidates = [f"{topic_lower} {i+1}" for i in range(num_concepts)]
     
-    # Use embeddings to rank relevance
     if candidates and embedding_model:
         topic_embedding = embedding_model.embed_query(topic_lower)
         candidate_embeddings = [embedding_model.embed_query(c) for c in candidates]
@@ -95,7 +94,7 @@ def generate_mind_map(concepts, topic):
     
     return mind_map_text
 
-def search_web(topic, style):
+def search_web(topic, style, grok_instance):
     print("Searching web with DuckDuckGo...")
     start_time = time.time()
     query = f"{topic} {VARK_CONTENT[style]['type']} educational resources {', '.join(VARK_CONTENT[style]['keywords'])}"
@@ -110,8 +109,13 @@ def search_web(topic, style):
             } for r in results
         ]
     except Exception as e:
-        print(f"DuckDuckGo search failed: {e}. Falling back to placeholders.")
-        formatted_results = [{"title": f"{topic} {VARK_CONTENT[style]['type'].capitalize()} Tutorial", "url": "https://example.com", "description": f"A {VARK_CONTENT[style]['type']} guide to {topic}"}]
+        print(f"DuckDuckGo search failed: {e}. Using Grok's mock X search...")
+        # Mock X search using Grok
+        formatted_results = [
+            {"title": f"X Post on {topic}", "url": "https://x.com", "description": f"A recent post: 'Loving this {VARK_CONTENT[style]['type']} {topic} tutorial!'"},
+            {"title": f"X Post on {topic}", "url": "https://x.com", "description": f"Check out this {VARK_CONTENT[style]['keywords'][0]} on {topic}!"},
+            {"title": f"X Post on {topic}", "url": "https://x.com", "description": f"Someone shared a great {VARK_CONTENT[style]['type']} resource for {topic}."}
+        ]
     print(f"Web search completed (took {time.time() - start_time:.2f}s)")
     return formatted_results
 
@@ -152,7 +156,7 @@ def generate_questions_from_concepts(llm, concepts, topic, score, num_questions=
         debug_response = re.sub(r"Correct: [A-D]\)?\s*(?=\n\n|$)", "", response, flags=re.DOTALL).strip()
         print(f"Debug: Fallback questions (answers hidden): {debug_response}")
     
-    question_pattern = re.compile(r"(?:\*\*Question:\*\*|Question:)\s*(.+?)\s*(?:\n\s*Options:|\nOptions:)\s*(.+?)\s*(?:\n\s*Correct:|\nCorrect:)\s*([A-D])\)?\s*(?=\n\n|\n\s*$|$)", re.DOTALL)
+    question_pattern = re.compile(r"(?:\*\*Question(?: \d+)?:\*\*|Question:)\s*(.+?)\s*(?:\n\s*Options:|\nOptions:)\s*(.+?)\s*(?:\n\s*Correct:|\nCorrect:)\s*([A-D])\)?\s*(?:\n|$)", re.DOTALL)
     matches = question_pattern.findall(response)
     if not matches:
         print(f"Debug: No questions parsed from response. Raw response: {response}")
@@ -183,22 +187,20 @@ def generate_questions_from_concepts(llm, concepts, topic, score, num_questions=
     print(f"Question generation completed (took {time.time() - start_time:.2f}s)")
     return questions[:num_questions], used_questions
 
-def load_or_process_documents():
+def load_or_process_documents(force_reprocess=False):
     cache_file = "data/processed_content.pkl"
     raw_dir = "data/raw/"
-    if os.path.exists(cache_file):
-        latest_raw_time = max(os.path.getmtime(f) for f in glob.glob(f"{raw_dir}/*") if os.path.isfile(f)) if glob.glob(f"{raw_dir}/*") else 0
-        if os.path.getmtime(cache_file) > latest_raw_time:
-            print("Loading cached document content...")
-            with open(cache_file, 'rb') as f:
-                return pickle.load(f)
-    print("Processing documents...")
-    start_time = time.time()
-    content, graphs = process_documents()
-    with open(cache_file, 'wb') as f:
-        pickle.dump((content, graphs), f)
-    print(f"Document processing completed (took {time.time() - start_time:.2f}s)")
-    return content, graphs
+    if force_reprocess or not os.path.exists(cache_file) or any(os.path.getmtime(f) > os.path.getmtime(cache_file) for f in glob.glob(f"{raw_dir}/*") if os.path.isfile(f)):
+        print("Processing documents...")
+        start_time = time.time()
+        content, graphs = process_documents()
+        with open(cache_file, 'wb') as f:
+            pickle.dump((content, graphs), f)
+        print(f"Document processing completed (took {time.time() - start_time:.2f}s)")
+        return content, graphs
+    print("Loading cached document content...")
+    with open(cache_file, 'rb') as f:
+        return pickle.load(f)
 
 def assess_knowledge(llm, topic, content, embedding_model, score, phase="Baseline", used_questions=None):
     correct = 0
@@ -214,7 +216,7 @@ def assess_knowledge(llm, topic, content, embedding_model, score, phase="Baselin
         if confirm != "yes":
             print("Please upload relevant documents to 'data/raw/' and press Enter to retry...")
             input()
-            content, _ = load_or_process_documents()
+            content, _ = load_or_process_documents(force_reprocess=True)
             concepts = extract_key_concepts(content, topic, embedding_model)
     
     questions, used_questions = generate_questions_from_concepts(llm, concepts, topic, score, used_questions=used_questions)
@@ -239,9 +241,16 @@ def assess_knowledge(llm, topic, content, embedding_model, score, phase="Baselin
     
     score = (correct / len(questions)) * 100
     print(f"{phase} knowledge score for {topic}: {score}%")
+    
+    # Mock image generation for visual learners
+    if "V" in assess_learning_style.__defaults__[0]:  # Check if V is in default scores
+        print("Would you like me to generate a diagram of these concepts? (yes/no): ")
+        if input().lower() == "yes":
+            print(f"[Mock Image]: A diagram showing '{topic}' with nodes for {', '.join(concepts)} connected by edges.")
+    
     return score, used_questions, incorrect_concepts
 
-def personalize_learning(llm, topic, style, baseline_score, content, embedding_model):
+def personalize_learning(llm, topic, style, baseline_score, content, embedding_model, grok_instance):
     used_questions = set()
     score = baseline_score
     concepts = extract_key_concepts(content, topic, embedding_model)
@@ -254,13 +263,16 @@ def personalize_learning(llm, topic, style, baseline_score, content, embedding_m
         phase_score, used_questions, incorrect_concepts = assess_knowledge(llm, topic, content, embedding_model, score, phase="Follow-up", used_questions=used_questions)
         score = max(score, phase_score)
         
-        resources = search_web(topic, style)
+        resources = search_web(topic, style, grok_instance)
         print(f"\nRecommended {VARK_CONTENT[style]['type']} resources for {topic}:")
         for i, res in enumerate(resources, 1):
             print(f"{i}. {res['title']} - {res['url']}\n   {res['description']}")
         
         if phase_score == 100 or not incorrect_concepts:
             print("\nGreat job! You've mastered this set.")
+            review = input("Would you like to review the concepts again? (yes/no): ").lower()
+            if review == "yes":
+                phase_score, used_questions, incorrect_concepts = assess_knowledge(llm, topic, content, embedding_model, score, phase="Review", used_questions=used_questions)
             break
         else:
             retry = input(f"\nYou scored {phase_score}%. Would you like to retry questions on {', '.join(incorrect_concepts)}? (yes/no): ").lower()
@@ -323,5 +335,5 @@ if __name__ == "__main__":
     content, graphs = load_or_process_documents()
     embedding_model = embeddings["huggingface"]
     baseline_score, used_questions, _ = assess_knowledge(llms["groq"], topic, content, embedding_model, 0, phase="Baseline")
-    final_score = personalize_learning(llms["groq"], topic, style, baseline_score, content, embedding_model)
+    final_score = personalize_learning(llms["groq"], topic, style, baseline_score, content, embedding_model, llms["groq"])
     update_user_profile(name, style, topic, baseline_score, final_score)
