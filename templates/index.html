@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Personalized Learning Companion</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; }
+        button { padding: 10px; margin: 5px; }
+    </style>
+</head>
+<body>
+    <h1>Personalized Learning Companion</h1>
+    <form action="{{ url_for('start_learning') }}" method="get">
+        <button type="submit">Start Learning</button>
+    </form>
+    <form action="{{ url_for('progress') }}" method="get">
+        <input type="text" name="name" placeholder="Enter your name" required>
+        <button type="submit">Review Progress</button>
+    </form>
+    <form action="/" method="get">
+        <button type="submit">Exit</button>
+    </form>
+</body>
+</html>

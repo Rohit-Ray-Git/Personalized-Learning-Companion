@@ -7,11 +7,10 @@ import os
 from collections import Counter
 import re
 import networkx as nx
-try:
-    import matplotlib.pyplot as plt
-    MATPLOTLIB_AVAILABLE = True
-except ImportError:
-    MATPLOTLIB_AVAILABLE = False
+import matplotlib
+matplotlib.use('Agg')  # Use non-GUI backend
+import matplotlib.pyplot as plt
+MATPLOTLIB_AVAILABLE = True
 from duckduckgo_search import DDGS
 import pickle
 import time
@@ -86,13 +85,13 @@ def generate_mind_map(concepts, topic):
     for concept in concepts:
         mind_map_text += f"  ├── {concept}\n"
     
-    if MATPLOTLIB_AVAILABLE:
-        pos = nx.spring_layout(G)
-        plt.figure(figsize=(8, 6))
-        nx.draw(G, pos, with_labels=True, node_color="lightblue", node_size=2000, font_size=10, font_weight="bold")
-        plt.title(f"Mind Map for {topic}")
-        plt.savefig("mind_map.png")
-        print("Mind map saved as 'mind_map.png'")
+    plt.figure(figsize=(8, 6))
+    pos = nx.spring_layout(G)
+    nx.draw(G, pos, with_labels=True, node_color="lightblue", node_size=2000, font_size=10, font_weight="bold")
+    plt.title(f"Mind Map for {topic}")
+    plt.savefig("static/mind_map.png", bbox_inches='tight')
+    plt.close()  # Always close the figure
+    print("Mind map saved as 'static/mind_map.png'")
     
     return mind_map_text
 
@@ -359,6 +358,3 @@ def main_menu():
         
         else:
             print("Invalid choice. Please try again.")
-
-if __name__ == "__main__":
-    main_menu()

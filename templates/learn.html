@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Learn</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; }
+        button, input[type="submit"] { padding: 10px; margin: 5px; }
+    </style>
+</head>
+<body>
+    <h1>Learn</h1>
+    {% if step == 'start' %}
+        <form action="{{ url_for('start_learning') }}" method="post">
+            <input type="text" name="name" placeholder="Enter your name" required><br>
+            <input type="text" name="topic" placeholder="Enter topic (e.g., Machine Learning)" required><br>
+            <input type="submit" value="Next">
+        </form>
+    {% elif step == 'vark' %}
+        <p>{{ question }}</p>
+        <form action="{{ url_for('learn') }}" method="post">
+            {% for key, value in options.items() %}
+                <input type="radio" name="choice" value="{{ key }}" required> {{ key }}: {{ value }}<br>
+            {% endfor %}
+            <input type="submit" value="Next">
+        </form>
+    {% elif step == 'upload' %}
+        <p>Please upload study materials (optional).</p>
+        <form action="{{ url_for('learn') }}" method="post" enctype="multipart/form-data">
+            <input type="file" name="file" accept=".pdf,.txt"><br>
+            <input type="submit" value="Proceed">
+        </form>
+    {% elif step == 'done' %}
+        <h2>Great job, {{ name }}!</h2>
+        <p>Topic: {{ topic }}</p>
+        <p>Baseline Score: {{ baseline_score }}%</p>
+        <p>Final Score: {{ final_score }}%</p>
+        <img src="{{ url_for('static_files', filename='mind_map.png') }}" alt="Mind Map">
+        <h3>Recommended Resources:</h3>
+        <ul style="text-align: left; display: inline-block;">
+            {% for res in resources %}
+                <li><a href="{{ res.url }}">{{ res.title }}</a> - {{ res.description }}</li>
+            {% endfor %}
+        </ul>
+        <form action="/" method="get">
+            <input type="submit" value="Back to Menu">
+        </form>
+    {% else %}
+        <p>Error: {{ error }}</p>
+        <form action="/" method="get">
+            <input type="submit" value="Back to Menu">
+        </form>
+    {% endif %}
+</body>
+</html>
