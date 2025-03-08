@@ -129,7 +129,7 @@ def quiz():
         user_data['questions'] = questions
         user_data['q_index'] = 0
         user_data['correct'] = 0
-        generate_mind_map(concepts, user_data['topic'])  # Already called here
+        generate_mind_map(concepts, user_data['topic'])
     
     q = user_data['questions'][user_data['q_index']]
     return render_template('quiz.html', question=q['question'], options=q['options'], phase=user_data['step'].capitalize())
