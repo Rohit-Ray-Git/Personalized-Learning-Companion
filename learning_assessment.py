@@ -45,6 +45,7 @@ def assess_learning_style():
     print(f"Dominant style: {dominant_style}")
     return dominant_style
 
+# learning_assessment.py (snippet)
 def extract_key_concepts(content, topic, embedding_model, num_concepts=5):
     print("Extracting key concepts...")
     start_time = time.time()
@@ -52,7 +53,7 @@ def extract_key_concepts(content, topic, embedding_model, num_concepts=5):
     words = re.findall(r'\b\w+\b', all_text)
     bigrams = [" ".join([words[i], words[i+1]]) for i in range(len(words)-1) if all(len(w) > 3 and w.isalpha() for w in [words[i], words[i+1]])][:100]
     
-    stop_words = {"this", "that", "with", "from", "which", "about", "editors", "published", "university", "handbook", "borko", "furht", "armando", "escalante", "science", "florida"}
+    stop_words = {"this", "that", "with", "from", "which", "about", "editors", "published", "university", "handbook", "borko", "furht", "armando", "escalante", "science", "florida", "example", "themoore", "penrosepseudoinverse", "termmemoryandothergatedrnns"}
     phrase_counts = Counter(bigrams)
     
     topic_lower = topic.lower()
@@ -65,7 +66,7 @@ def extract_key_concepts(content, topic, embedding_model, num_concepts=5):
         candidate_embeddings = [embedding_model.embed_query(c) for c in candidates]
         similarities = [np.dot(topic_embedding, c_emb) / (np.linalg.norm(topic_embedding) * np.linalg.norm(c_emb)) for c_emb in candidate_embeddings]
         ranked = sorted(zip(candidates, similarities), key=lambda x: x[1], reverse=True)
-        unique_concepts = [c for c, s in ranked if s > 0.7][:num_concepts]  # Similarity threshold
+        unique_concepts = [c for c, s in ranked if s > 0.8][:num_concepts]  # Raised threshold
         if len(unique_concepts) < num_concepts:
             unique_concepts.extend([c for c, _ in ranked[num_concepts:]][:num_concepts - len(unique_concepts)])
     else:
