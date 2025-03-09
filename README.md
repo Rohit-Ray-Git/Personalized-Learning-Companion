@@ -100,7 +100,7 @@ python app.py
 
 ### Known Issues
 - Concept extraction occasionally merges terms (e.g., `strategiesandmeta algorithms`). Fix in progress.
-- Question parsing may fall back to generic questions if Grok’s format varies.
+- Question parsing may fall back to generic questions if LLM’s format varies.
 
 ---
 
