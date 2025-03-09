@@ -132,3 +132,4 @@ These enhancements will make the app a fully-fledged AI-powered learning platfor
 4. Push to your branch (`git push origin feature/awesome-idea`).
 5. Open a Pull Request!
 
+Built with 💙 by Rohit | March 2025
