@@ -52,10 +52,12 @@ def learn():
             return redirect(url_for('learn'))
         
         elif user_data['step'] == 'upload':
+            force_reprocess = False
             if 'file' in request.files and request.files['file'].filename:
                 file = request.files['file']
                 file.save(os.path.join(app.config['UPLOAD_FOLDER'], file.filename))
-            content, _ = load_or_process_documents(force_reprocess=True)
+                force_reprocess = True  # Only reprocess if a new file is uploaded
+            content, _ = load_or_process_documents(force_reprocess=force_reprocess)
             user_data['content'] = content
             user_data['step'] = 'baseline'
             return redirect(url_for('quiz'))
@@ -111,11 +113,11 @@ def quiz():
             if user_data['step'] == 'baseline':
                 user_data['baseline_score'] = score
                 user_data['step'] = 'follow-up'
-                print(f"Baseline completed: Score {score}%")  # Debug log
+                print(f"Baseline completed: Score {score}%")
             else:
                 user_data['final_score'] = score
                 user_data['step'] = 'done'
-                print(f"Follow-up completed: Score {score}%")  # Debug log
+                print(f"Follow-up completed: Score {score}%")
             user_data['q_index'] = 0
             user_data['correct'] = 0
             return redirect(url_for('learn'))
